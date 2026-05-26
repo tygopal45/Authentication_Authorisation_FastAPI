@@ -3,8 +3,10 @@ from sqlalchemy.orm import Session
 import models, schemas, utils
 from auth_database import get_db
 from dotenv import load_dotenv
+import os
 from jose import jwt
 from datetime import datetime, timedelta, timezone
+from fastapi.security import OAuth2PasswordRequestForm
 
 
 load_dotenv()
@@ -12,9 +14,9 @@ load_dotenv()
 # helper function to take user input
 def create_access_token(data: dict):
     to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + timedelta(minutes=int(("ACCESS_TOKEN_EXPIRE_MINUTES")))
+    expire = datetime.now(timezone.utc) + timedelta(minutes=int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 30)))
     to_encode.update({"exp": expire})
-    encode_jwt = jwt.encode(to_encode, ("SECRET_KEY"), algorithm=("ALGORITHM"))
+    encode_jwt = jwt.encode(to_encode, os.getenv("SECRET_KEY"), algorithm=os.getenv("ALGORITHM"))
     return encode_jwt
 
 
@@ -31,9 +33,9 @@ def register_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
 
     # create a new user instance
     new_user = models.User(
-        user=user.username,
+        username=user.username,
         email=user.email, 
-        password=hashed_password,
+        hashed_password=hashed_password,
         role=user.role
     )
 
@@ -46,6 +48,23 @@ def register_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
     return {"id": new_user.id, "username": new_user.username, "email": new_user.email, "role": new_user.role}
 
 
+@app.post("/login")
+def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+          user = db.query(models.User).filter(models.User.username == form_data.username).first()
+          if not user:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid/Incorrect username")
+          if not utils.verify_password(form_data.password, user.hashed_password):
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid/Incorrect password")
+          
+          # 'sub' is a standard claim in JWT that stands for "subject". 
+          # It is used to identify the principal that is the subject of the JWT. 
+          # In this case, we are using the username as the subject of the token. 
+          # The 'role' claim is a custom claim that we are adding to include the user's role in the token. 
+          # This can be useful for authorization purposes, 
+          # allowing us to check the user's role when they make requests to protected endpoints.   
+          token_data = {'sub': user.username, 'role': user.role}
+          token = create_access_token(token_data)
+          return {"access_token": token, "token_type": "bearer"}
 
 
 
